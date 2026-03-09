@@ -1,823 +1,763 @@
-import io
+rom __future__ import annotations
+
 import os
-import re
-import tempfile
-from dataclasses import dataclass, field
-from typing import List, Optional, Tuple
+from datetime import datetime
+from io import BytesIO
+from typing import Dict
 
 import streamlit as st
-from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt
+from anthropic import Anthropic
+
+from prompt import (
+    SYSTEM_PROMPT,
+    build_gap_diagnosis_prompt,
+    build_intake_merge_prompt,
+    build_rewrite_prompt,
+    build_story_reinforcement_prompt,
+    build_unit_draft_prompt,
+    build_unit_plan_prompt,
+)
+
+APP_TITLE = "BLUE JEANS NOVEL ENGINE"
+ANTHROPIC_MODEL = "claude-sonnet-4-6"
+DEFAULT_STYLE = "시드니 셀던 스타일의 대중 장편소설 감각. 빠르게 읽히고, 장면이 선명하며, 챕터 말미 후킹이 강한 문체."
+
+st.set_page_config(
+    page_title=APP_TITLE,
+    page_icon="👖",
+    layout="wide",
+    initial_sidebar_state="collapsed",
+)
+
+# ─────────────────────────────────────
+# State
+# ─────────────────────────────────────
+DEFAULT_STATE = {
+    "title": "",
+    "genre": "스릴러",
+    "style_note": DEFAULT_STYLE,
+    "overview": "",
+    "characters": "",
+    "synopsis": "",
+    "extra_notes": "",
+    "merged_summary": "",
+    "gap_report": "",
+    "reinforced_story": "",
+    "unit_plan": "",
+    "unit_drafts": {},
+    "selected_unit": 1,
+    "rewrite_mode": "더 상업적으로",
+}
+
+for key, value in DEFAULT_STATE.items():
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
-# =========================================================
-# Models
-# =========================================================
+# ─────────────────────────────────────
+# CSS
+# ─────────────────────────────────────
+st.markdown(
+    """
+<style>
+@import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+@import url('https://cdn.jsdelivr.net/gh/projectnoonnu/2408-3@latest/Paperlogy.css');
+@import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&display=swap');
 
-@dataclass
-class Block:
-    kind: str  # scene_heading, action, character, dialogue, parenthetical, transition
-    text: str
+:root {
+    --navy: #202A78;
+    --y: #FFCB05;
+    --bg: #F7F7F5;
+    --card: #FFFFFF;
+    --card-border: #DDDDE6;
+    --t: #2A2A3A;
+    --g: #2EC484;
+    --dim: #8A8FA3;
+    --light-bg: #EEEEF6;
+    --display: 'Playfair Display', 'Paperlogy', 'Georgia', serif;
+    --body: 'Pretendard', -apple-system, BlinkMacSystemFont, sans-serif;
+    --heading: 'Paperlogy', 'Pretendard', sans-serif;
+}
+
+html, body, [class*="css"] {
+    font-family: var(--body);
+    color: var(--t);
+    -webkit-font-smoothing: antialiased;
+}
+
+.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
+[data-testid="stMainBlockContainer"], [data-testid="stHeader"],
+[data-testid="stBottom"] {
+    background-color: var(--bg) !important;
+    color: var(--t) !important;
+}
+
+.stMarkdown, .stText, .stCode { color: var(--t) !important; }
+h1, h2, h3, h4, h5, h6 {
+    color: var(--navy) !important;
+    font-family: var(--heading) !important;
+}
+p, span, label, div, li { color: var(--t); }
+section[data-testid="stSidebar"] { display: none; }
+
+.stTextInput input, .stTextArea textarea,
+[data-testid="stTextInput"] input, [data-testid="stTextArea"] textarea {
+    background-color: var(--card) !important;
+    color: var(--t) !important;
+    border: 1.5px solid var(--card-border) !important;
+    border-radius: 8px !important;
+    font-family: var(--body) !important;
+    font-size: 0.93rem !important;
+    padding: 0.7rem 0.9rem !important;
+}
+
+.stTextInput input:focus, .stTextArea textarea:focus,
+[data-testid="stTextInput"] input:focus, [data-testid="stTextArea"] textarea:focus {
+    border-color: var(--navy) !important;
+    box-shadow: 0 0 0 2px rgba(32,42,120,0.08) !important;
+}
+
+.stTextInput input::placeholder, .stTextArea textarea::placeholder,
+[data-testid="stTextInput"] input::placeholder, [data-testid="stTextArea"] textarea::placeholder {
+    color: var(--dim) !important;
+    font-size: 0.86rem !important;
+}
+
+.stSelectbox > div > div, [data-baseweb="select"] > div, [data-baseweb="select"] input {
+    background-color: var(--card) !important;
+    color: var(--t) !important;
+    border-color: var(--card-border) !important;
+    border-radius: 8px !important;
+}
+
+[data-baseweb="popover"], [data-baseweb="menu"], [role="listbox"], [role="option"] {
+    background-color: var(--card) !important;
+    color: var(--t) !important;
+}
+[role="option"]:hover { background-color: var(--light-bg) !important; }
+
+.stTextInput label, .stTextArea label, .stSelectbox label {
+    color: var(--t) !important;
+    font-weight: 700 !important;
+    font-size: 0.88rem !important;
+    margin-bottom: 0.35rem !important;
+}
+
+.stButton > button {
+    color: var(--t) !important;
+    border: 1.5px solid var(--card-border) !important;
+    background-color: var(--card) !important;
+    border-radius: 8px !important;
+    font-family: var(--body) !important;
+    font-weight: 800 !important;
+    font-size: 0.92rem !important;
+    padding: 0.64rem 1.2rem !important;
+    transition: all 0.2s;
+}
+
+.stButton > button:hover {
+    border-color: var(--navy) !important;
+    box-shadow: 0 2px 8px rgba(32,42,120,0.08) !important;
+}
+
+.stButton > button[kind="primary"],
+.stButton > button[data-testid="stBaseButton-primary"] {
+    background-color: var(--y) !important;
+    color: var(--navy) !important;
+    border-color: var(--y) !important;
+    font-weight: 900 !important;
+}
+
+.stButton > button[kind="primary"]:hover,
+.stButton > button[data-testid="stBaseButton-primary"]:hover {
+    background-color: #E8B800 !important;
+    box-shadow: 0 2px 12px rgba(255,203,5,0.30) !important;
+}
+
+.stDownloadButton > button {
+    color: var(--navy) !important;
+    border: 1.5px solid var(--y) !important;
+    background-color: var(--y) !important;
+    border-radius: 8px !important;
+    font-family: var(--body) !important;
+    font-weight: 900 !important;
+    font-size: 0.90rem !important;
+    padding: 0.64rem 1.2rem !important;
+}
+
+.stExpander, details, details summary {
+    background-color: var(--card) !important;
+    color: var(--t) !important;
+    border: 1px solid var(--card-border) !important;
+    border-radius: 8px !important;
+}
+
+details[open] > div { background-color: var(--card) !important; }
+.stExpander summary, .stExpander summary span { color: var(--t) !important; }
+.stAlert { color: var(--t) !important; border-radius: 8px !important; }
+[data-testid="stVerticalBlock"], [data-testid="stHorizontalBlock"], [data-testid="stColumn"] {
+    background-color: transparent !important;
+}
+
+.header {
+    font-size: 0.85rem;
+    font-weight: 700;
+    color: var(--navy);
+    letter-spacing: 0.15em;
+    font-family: var(--heading);
+}
+
+.brand-title {
+    font-size: 2.6rem;
+    font-weight: 900;
+    color: var(--navy);
+    font-family: var(--display);
+    letter-spacing: -0.02em;
+    position: relative;
+    display: inline-block;
+}
+
+.brand-title::after {
+    content: '';
+    position: absolute;
+    bottom: 2px;
+    left: 0;
+    width: 100%;
+    height: 4px;
+    background: var(--y);
+    border-radius: 2px;
+}
+
+.sub {
+    font-size: 0.72rem;
+    color: var(--dim);
+    letter-spacing: 0.15em;
+    margin-top: 0.5rem;
+    margin-bottom: 1.5rem;
+}
+
+.callout {
+    background: var(--light-bg);
+    border-left: 4px solid var(--navy);
+    padding: 0.95rem 1.1rem;
+    margin: 0.5rem 0 1rem 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 0.90rem;
+    color: var(--t);
+}
+
+.cl {
+    color: var(--navy);
+    font-weight: 800;
+    font-size: 0.74rem;
+    letter-spacing: 0.03em;
+    margin-bottom: 0.3rem;
+    text-transform: uppercase;
+}
+
+.section-header {
+    background: var(--y);
+    color: var(--navy);
+    padding: 0.75rem 1rem;
+    border-radius: 6px;
+    font-weight: 900;
+    font-size: 1.04rem;
+    font-family: var(--heading);
+    margin: 1.6rem 0 0.9rem 0;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.section-header .en {
+    font-family: var(--display);
+    font-size: 0.78rem;
+    font-weight: 700;
+    letter-spacing: 0.05em;
+    opacity: 0.72;
+}
+
+.small-meta {
+    font-size: 0.80rem;
+    color: var(--dim);
+    margin-top: -0.1rem;
+    margin-bottom: 0.55rem;
+}
+
+.output-card {
+    background: var(--card);
+    border: 1px solid var(--card-border);
+    border-radius: 10px;
+    padding: 1rem 1.1rem;
+    margin: 0.55rem 0 1rem 0;
+}
+
+.mini-guide {
+    background: #ffffff;
+    border: 1px solid var(--card-border);
+    border-radius: 8px;
+    padding: 0.85rem 1rem;
+    margin: 0.25rem 0 1rem 0;
+}
+
+hr {
+    border: none !important;
+    border-top: 1px solid var(--card-border) !important;
+    margin: 1.4rem 0 !important;
+}
+</style>
+""",
+    unsafe_allow_html=True,
+)
 
 
-@dataclass
-class Scene:
-    heading: str
-    blocks: List[Block] = field(default_factory=list)
+# ─────────────────────────────────────
+# Helpers
+# ─────────────────────────────────────
+def get_client() -> Anthropic | None:
+    api_key = st.secrets.get("ANTHROPIC_API_KEY", os.getenv("ANTHROPIC_API_KEY"))
+    return Anthropic(api_key=api_key) if api_key else None
 
 
-# =========================================================
-# Constants
-# =========================================================
-
-APP_TITLE = "Screenplay Converter"
-DEFAULT_OUTPUT_NAME = "converted_hollywood_screenplay.docx"
-
-META_PATTERNS = [
-    r"^\s*beat\s*\d+",
-    r"^\s*\d+막\s*[—\-]",
-    r"^\s*act\s*\d+",
-    r"^\s*theme stated",
-    r"^\s*setup",
-    r"^\s*catalyst",
-    r"^\s*debate",
-    r"^\s*break into two",
-    r"^\s*b[- ]?story",
-    r"^\s*fun and games",
-    r"^\s*midpoint",
-    r"^\s*bad guys close in",
-    r"^\s*all is lost",
-    r"^\s*dark night of the soul",
-    r"^\s*break into three",
-    r"^\s*finale",
-    r"^\s*voice check",
-    r"^\s*summary\s*$",
-    r"^\s*요약\s*$",
-    r"^\s*보이스 점검",
-    r"^\s*작법",
-]
-
-DIVIDER_PATTERNS = [
-    r"^[=\-─═_]{3,}$",
-    r"^[#]{3,}$",
-    r"^[·•\*]{3,}$",
-]
-
-SCENE_PATTERNS = [
-    r"^\s*(INT\.|EXT\.|INT/EXT\.|I/E\.)",
-    r"^\s*S#?\s*\d+",
-    r"^\s*SCENE\s+\d+",
-]
-
-TRANSITION_PATTERNS = [
-    r"^\s*CUT TO:\s*$",
-    r"^\s*MATCH CUT TO:\s*$",
-    r"^\s*SMASH CUT TO:\s*$",
-    r"^\s*DISSOLVE TO:\s*$",
-    r"^\s*FADE IN:\s*$",
-    r"^\s*FADE OUT\.?\s*$",
-]
-
-TIME_WORDS = [
-    "DAY", "NIGHT", "MORNING", "EVENING", "DAWN", "DUSK", "LATER",
-    "낮", "밤", "아침", "새벽", "저녁", "그날", "잠시 후", "다음날", "다음 날"
-]
-
-LOCATION_CUE_WORDS = [
-    "옥상", "복도", "병실", "사무실", "주차장", "골목", "거리", "부엌", "주방",
-    "거실", "방", "학교", "교실", "경찰서", "병원", "엘리베이터", "화장실",
-    "ROOFTOP", "HALLWAY", "OFFICE", "PARKING", "ALLEY", "STREET",
-    "KITCHEN", "LIVING ROOM", "BEDROOM", "CLASSROOM", "POLICE STATION",
-    "HOSPITAL", "ELEVATOR", "BATHROOM"
-]
-
-
-# =========================================================
-# Text helpers
-# =========================================================
-
-def normalize_text(text: str) -> str:
-    text = text.replace("\r\n", "\n").replace("\r", "\n")
-    text = text.replace("\u00A0", " ")
-    text = text.replace("“", '"').replace("”", '"')
-    text = text.replace("‘", "'").replace("’", "'")
-    return text
-
-
-def normalize_line(line: str) -> str:
-    line = normalize_text(line)
-    line = re.sub(r"[ \t]+", " ", line)
-    return line.strip()
-
-
-def looks_like_divider(line: str) -> bool:
-    s = normalize_line(line)
-    if not s:
-        return False
-    return any(re.match(p, s, flags=re.IGNORECASE) for p in DIVIDER_PATTERNS)
-
-
-def looks_like_meta(line: str) -> bool:
-    s = normalize_line(line)
-    if not s:
-        return False
-    return any(re.match(p, s, flags=re.IGNORECASE) for p in META_PATTERNS)
-
-
-def looks_like_transition(line: str) -> bool:
-    s = normalize_line(line)
-    return any(re.match(p, s, flags=re.IGNORECASE) for p in TRANSITION_PATTERNS)
-
-
-def looks_like_scene_heading(line: str) -> bool:
-    s = normalize_line(line)
-    if not s:
-        return False
-
-    if any(re.match(p, s, flags=re.IGNORECASE) for p in SCENE_PATTERNS):
-        return True
-
-    if any(word in s for word in LOCATION_CUE_WORDS):
-        if any(t in s.upper() for t in TIME_WORDS) or " - " in s or " / " in s:
-            return True
-
-    return False
-
-
-def strip_scene_number_prefix(line: str) -> str:
-    s = normalize_line(line)
-    s = re.sub(r"^\s*S#?\s*\d+\.?\s*", "", s, flags=re.IGNORECASE)
-    s = re.sub(r"^\s*SCENE\s+\d+\.?\s*", "", s, flags=re.IGNORECASE)
-    return s.strip()
-
-
-def canonical_scene_heading(line: str) -> str:
-    s = strip_scene_number_prefix(line)
-    s = s.upper()
-    s = re.sub(r"\s+", " ", s)
-    return s
-
-
-def looks_like_parenthetical(line: str) -> bool:
-    s = normalize_line(line)
-    return bool(re.match(r"^\(.*\)$", s))
-
-
-def is_probable_character_name(line: str) -> bool:
-    s = normalize_line(line)
-    if not s:
-        return False
-    if len(s) > 30:
-        return False
-    if looks_like_scene_heading(s) or looks_like_transition(s) or looks_like_meta(s):
-        return False
-    if re.search(r"[.!?]", s):
-        return False
-
-    if s.upper() == s and re.search(r"[A-Z]", s):
-        return True
-
-    if re.fullmatch(r"[가-힣A-Za-z0-9# ]{1,12}", s):
-        return True
-
-    return False
-
-
-def split_lines_from_text(text: str) -> List[str]:
-    text = normalize_text(text)
-    raw_lines = text.split("\n")
-    lines: List[str] = []
-    blank_streak = 0
-
-    for raw in raw_lines:
-        line = normalize_line(raw)
-        if not line:
-            blank_streak += 1
-            if blank_streak <= 1:
-                lines.append("")
-            continue
-        blank_streak = 0
-        lines.append(line)
-
-    while lines and lines[0] == "":
-        lines.pop(0)
-    while lines and lines[-1] == "":
-        lines.pop()
-
-    return lines
-
-
-# =========================================================
-# Input readers
-# =========================================================
-
-def read_txt_file(uploaded_file) -> List[str]:
-    uploaded_file.seek(0)
-    content = uploaded_file.read().decode("utf-8", errors="ignore")
-    return split_lines_from_text(content)
-
-
-def read_docx_file(uploaded_file) -> List[str]:
-    uploaded_file.seek(0)
-    with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
-        tmp.write(uploaded_file.read())
-        tmp_path = tmp.name
+def stream_ai(prompt_text: str, tokens: int = 8000):
+    client = get_client()
+    if not client:
+        yield "❌ ANTHROPIC_API_KEY가 설정되지 않았습니다. Streamlit Secrets 또는 환경변수에 등록해 주세요."
+        return
 
     try:
-        doc = Document(tmp_path)
-        paragraphs = [normalize_line(p.text) for p in doc.paragraphs]
-        text = "\n".join(paragraphs)
-        return split_lines_from_text(text)
-    finally:
-        if os.path.exists(tmp_path):
-            os.remove(tmp_path)
+        with client.messages.stream(
+            model=ANTHROPIC_MODEL,
+            max_tokens=tokens,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt_text}],
+        ) as stream:
+            for text in stream.text_stream:
+                yield text
+    except Exception as exc:
+        yield f"\n\n❌ 오류: {exc}"
 
 
-# =========================================================
-# Cleaning
-# =========================================================
-
-def remove_meta_and_noise(lines: List[str]) -> List[str]:
-    cleaned: List[str] = []
-    for line in lines:
-        if line == "":
-            cleaned.append(line)
-            continue
-        if looks_like_divider(line):
-            continue
-        if looks_like_meta(line):
-            continue
-        cleaned.append(line)
-
-    collapsed: List[str] = []
-    prev_blank = False
-    for line in cleaned:
-        is_blank = line == ""
-        if is_blank and prev_blank:
-            continue
-        collapsed.append(line)
-        prev_blank = is_blank
-
-    while collapsed and collapsed[0] == "":
-        collapsed.pop(0)
-    while collapsed and collapsed[-1] == "":
-        collapsed.pop()
-
-    return collapsed
+def generate_to_state(state_key: str, prompt_text: str, label: str, tokens: int = 8000):
+    st.markdown(f'<div class="callout"><div class="cl">RUNNING</div>{label}</div>', unsafe_allow_html=True)
+    result = st.write_stream(stream_ai(prompt_text, tokens=tokens))
+    st.session_state[state_key] = result or ""
+    st.rerun()
 
 
-# =========================================================
-# Classification and structure
-# =========================================================
-
-def classify_lines(lines: List[str]) -> List[Block]:
-    blocks: List[Block] = []
-    mode: Optional[str] = None
-
-    for i, line in enumerate(lines):
-        if not line:
-            mode = None
-            continue
-
-        next_line = lines[i + 1] if i + 1 < len(lines) else ""
-
-        if looks_like_transition(line):
-            blocks.append(Block("transition", normalize_line(line).upper()))
-            mode = None
-            continue
-
-        if looks_like_scene_heading(line):
-            heading = canonical_scene_heading(line)
-            blocks.append(Block("scene_heading", heading))
-            mode = None
-            continue
-
-        if is_probable_character_name(line) and next_line and not looks_like_scene_heading(next_line):
-            blocks.append(Block("character", normalize_line(line).upper()))
-            mode = "dialogue"
-            continue
-
-        if looks_like_parenthetical(line):
-            blocks.append(Block("parenthetical", normalize_line(line)))
-            continue
-
-        if mode == "dialogue":
-            blocks.append(Block("dialogue", normalize_line(line)))
-            continue
-
-        blocks.append(Block("action", normalize_line(line)))
-        mode = None
-
-    return merge_adjacent_blocks(blocks)
+def chunks() -> list[str]:
+    return [
+        st.session_state["overview"],
+        st.session_state["characters"],
+        st.session_state["synopsis"],
+        st.session_state["extra_notes"],
+    ]
 
 
-def merge_adjacent_blocks(blocks: List[Block]) -> List[Block]:
-    if not blocks:
-        return []
-
-    merged: List[Block] = []
-    for block in blocks:
-        if not merged:
-            merged.append(block)
-            continue
-
-        prev = merged[-1]
-
-        if prev.kind == "action" and block.kind == "action":
-            prev.text = f"{prev.text} {block.text}".strip()
-            continue
-
-        if prev.kind == "dialogue" and block.kind == "dialogue":
-            prev.text = f"{prev.text} {block.text}".strip()
-            continue
-
-        merged.append(block)
-
-    return merged
+def previous_unit_summary(unit_no: int) -> str:
+    if unit_no <= 1:
+        return ""
+    prev = st.session_state["unit_drafts"].get(unit_no - 1, "")
+    if not prev:
+        return ""
+    return prev[:2500]
 
 
-def blocks_to_scenes(blocks: List[Block]) -> List[Scene]:
-    scenes: List[Scene] = []
-    current_scene: Optional[Scene] = None
+def all_outputs_text() -> str:
+    parts = []
+    if st.session_state["merged_summary"]:
+        parts.append("=" * 70 + "\n통합 분석\n" + "=" * 70 + "\n\n" + st.session_state["merged_summary"])
+    if st.session_state["gap_report"]:
+        parts.append("=" * 70 + "\n부족한 점 진단\n" + "=" * 70 + "\n\n" + st.session_state["gap_report"])
+    if st.session_state["reinforced_story"]:
+        parts.append("=" * 70 + "\n전체 줄거리 보강\n" + "=" * 70 + "\n\n" + st.session_state["reinforced_story"])
+    if st.session_state["unit_plan"]:
+        parts.append("=" * 70 + "\n12 Unit 설계\n" + "=" * 70 + "\n\n" + st.session_state["unit_plan"])
 
-    def ensure_default_scene():
-        nonlocal current_scene
-        if current_scene is None:
-            current_scene = Scene(heading="INT. UNKNOWN LOCATION - DAY")
-            scenes.append(current_scene)
-
-    for block in blocks:
-        if block.kind == "scene_heading":
-            current_scene = Scene(heading=block.text)
-            scenes.append(current_scene)
-            continue
-
-        ensure_default_scene()
-        current_scene.blocks.append(block)
-
-    return scenes
-
-
-# =========================================================
-# DOCX Export
-# =========================================================
-
-def try_load_template(template_path: str) -> Document:
-    if os.path.exists(template_path):
-        return Document(template_path)
-    return Document()
+    drafts: Dict[int, str] = st.session_state["unit_drafts"]
+    for unit_no in sorted(drafts.keys()):
+        parts.append(
+            "=" * 70
+            + f"\nUnit {unit_no:02d} 원고\n"
+            + "=" * 70
+            + "\n\n"
+            + drafts[unit_no]
+        )
+    return "\n\n\n".join(parts)
 
 
-def clear_document_body(doc: Document) -> None:
-    body = doc._element.body
-    for child in list(body):
-        if child.tag.endswith("sectPr"):
-            continue
-        body.remove(child)
+def make_docx_bytes(title: str, genre: str, body_text: str) -> bytes:
+    from docx import Document as DocxDocument
+    from docx.enum.text import WD_ALIGN_PARAGRAPH
+    from docx.shared import Pt, RGBColor
 
-
-def set_document_defaults(doc: Document) -> None:
-    try:
-        section = doc.sections[0]
-        section.top_margin = Inches(1.0)
-        section.bottom_margin = Inches(1.0)
-        section.left_margin = Inches(1.5)
-        section.right_margin = Inches(1.0)
-    except IndexError:
-        pass
-
+    doc = DocxDocument()
     style = doc.styles["Normal"]
-    style.font.name = "Courier New"
-    style.font.size = Pt(12)
+    style.font.name = "맑은 고딕"
+    style.font.size = Pt(10.5)
+    style.paragraph_format.space_after = Pt(4)
 
-
-def add_paragraph(
-    doc: Document,
-    text: str,
-    *,
-    align=None,
-    left_indent: float = 0.0,
-    right_indent: float = 0.0,
-    first_line_indent: Optional[float] = None,
-    space_before: float = 0.0,
-    space_after: float = 0.0,
-    keep_with_next: bool = False,
-    bold: bool = False,
-):
     p = doc.add_paragraph()
-    p.alignment = align if align is not None else WD_ALIGN_PARAGRAPH.LEFT
-    pf = p.paragraph_format
-    pf.left_indent = Inches(left_indent)
-    pf.right_indent = Inches(right_indent)
-    if first_line_indent is not None:
-        pf.first_line_indent = Inches(first_line_indent)
-    pf.space_before = Pt(space_before)
-    pf.space_after = Pt(space_after)
-    pf.keep_with_next = keep_with_next
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run("BLUE JEANS PICTURES")
+    r.font.size = Pt(10)
+    r.font.color.rgb = RGBColor(0x20, 0x2A, 0x78)
+    r.bold = True
 
-    run = p.add_run(text)
-    run.bold = bold
-    run.font.name = "Courier New"
-    run.font.size = Pt(12)
-    return p
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run("NOVEL ENGINE")
+    r.font.size = Pt(28)
+    r.font.color.rgb = RGBColor(0x20, 0x2A, 0x78)
+    r.bold = True
 
+    p = doc.add_paragraph()
+    p.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    r = p.add_run(f"제목: {title or '(제목 미입력)'}  |  장르: {genre}")
+    r.font.size = Pt(10)
+    r.font.color.rgb = RGBColor(0x8A, 0x8F, 0xA3)
 
-def export_scenes_to_docx(
-    scenes: List[Scene],
-    template_path: str = "template.docx",
-) -> bytes:
-    doc = try_load_template(template_path)
-    clear_document_body(doc)
-    set_document_defaults(doc)
-
-    add_paragraph(
-        doc,
-        "SCREENPLAY",
-        align=WD_ALIGN_PARAGRAPH.CENTER,
-        space_before=18,
-        space_after=18,
-        bold=True,
-    )
-    add_paragraph(
-        doc,
-        "Converted Draft",
-        align=WD_ALIGN_PARAGRAPH.CENTER,
-        space_after=24,
-    )
     doc.add_page_break()
 
-    for scene in scenes:
-        add_paragraph(
-            doc,
-            scene.heading,
-            bold=True,
-            space_before=6,
-            space_after=6,
-            keep_with_next=True,
-        )
+    for line in body_text.split("\n"):
+        if line.strip().startswith("="):
+            continue
+        if line.strip():
+            if line.startswith("Unit ") or line in {"통합 분석", "부족한 점 진단", "전체 줄거리 보강", "12 Unit 설계"}:
+                h = doc.add_heading(line.strip(), level=1)
+                for run in h.runs:
+                    run.font.color.rgb = RGBColor(0x20, 0x2A, 0x78)
+            else:
+                doc.add_paragraph(line)
+        else:
+            doc.add_paragraph("")
 
-        for block in scene.blocks:
-            if block.kind == "action":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    space_after=6,
-                )
-
-            elif block.kind == "character":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    left_indent=2.2,
-                    space_before=6,
-                    space_after=0,
-                    keep_with_next=True,
-                )
-
-            elif block.kind == "parenthetical":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    left_indent=1.8,
-                    right_indent=2.0,
-                    space_after=0,
-                    keep_with_next=True,
-                )
-
-            elif block.kind == "dialogue":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    left_indent=1.4,
-                    right_indent=1.6,
-                    space_after=3,
-                )
-
-            elif block.kind == "transition":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    align=WD_ALIGN_PARAGRAPH.RIGHT,
-                    space_before=6,
-                    space_after=6,
-                    bold=True,
-                )
-
-        add_paragraph(doc, "", space_after=6)
-
-    buffer = io.BytesIO()
-    doc.save(buffer)
-    buffer.seek(0)
-    return buffer.getvalue()
+    buf = BytesIO()
+    doc.save(buf)
+    buf.seek(0)
+    return buf.getvalue()
 
 
-# =========================================================
-# Preview helpers
-# =========================================================
+# ─────────────────────────────────────
+# Header
+# ─────────────────────────────────────
+st.markdown(
+    '<div style="text-align:center;padding:1rem 0 0 0">'
+    '<div class="header">B L U E &nbsp; J E A N S &nbsp; P I C T U R E S</div>'
+    '<div class="brand-title">NOVEL ENGINE</div>'
+    '<div class="sub">C I N E M A T I C &nbsp; · &nbsp; C O M M E R C I A L &nbsp; · &nbsp; S I M P L E &nbsp; · &nbsp; C L I C K</div>'
+    '</div>',
+    unsafe_allow_html=True,
+)
 
-def build_preview_text(scenes: List[Scene]) -> str:
-    parts: List[str] = []
-    for scene in scenes:
-        parts.append(scene.heading)
-        parts.append("")
-        for block in scene.blocks:
-            parts.append(block.text)
-            parts.append("")
-    return "\n".join(parts).strip()
-
-
-def process_uploaded_file(uploaded_file) -> Tuple[List[str], List[str], List[Block], List[Scene]]:
-    ext = os.path.splitext(uploaded_file.name)[1].lower()
-
-    if ext == ".txt":
-        raw_lines = read_txt_file(uploaded_file)
-    elif ext == ".docx":
-        raw_lines = read_docx_file(uploaded_file)
-    else:
-        raise ValueError("지원하지 않는 파일 형식입니다. .txt 또는 .docx 파일을 업로드하세요.")
-
-    cleaned_lines = remove_meta_and_noise(raw_lines)
-    blocks = classify_lines(cleaned_lines)
-    scenes = blocks_to_scenes(blocks)
-    return raw_lines, cleaned_lines, blocks, scenes
+st.markdown(
+    '<div class="callout"><div class="cl">HOW TO USE</div>'
+    '기획서를 아무도 모를 용어로 자르지 않습니다. 아래 4칸은 의미가 분명합니다. '
+    '① 작품 개요 ② 캐릭터 ③ 줄거리/트리트먼트 ④ 추가 메모. '
+    '네 칸을 다 채울 필요는 없고, 보통 1~3번만으로도 작동합니다.</div>',
+    unsafe_allow_html=True,
+)
 
 
-# =========================================================
-# Streamlit UI
-# =========================================================
+# ─────────────────────────────────────
+# STEP 1
+# ─────────────────────────────────────
+st.markdown(
+    '<div class="section-header">STEP 1 · 기획서 입력 <span class="en">CLEAR INPUT ONLY</span></div>',
+    unsafe_allow_html=True,
+)
 
-def main():
-    st.set_page_config(
-        page_title="Screenplay Converter",
-        layout="wide",
-        initial_sidebar_state="collapsed"
+meta_col1, meta_col2 = st.columns([1.4, 1])
+with meta_col1:
+    st.session_state["title"] = st.text_input(
+        "작품 제목",
+        value=st.session_state["title"],
+        placeholder="예: 머지 앤 어퀴지션",
+    )
+with meta_col2:
+    st.session_state["genre"] = st.selectbox(
+        "장르",
+        ["스릴러", "드라마", "느와르", "멜로/로맨스", "호러", "액션", "코미디", "SF/판타지"],
+        index=["스릴러", "드라마", "느와르", "멜로/로맨스", "호러", "액션", "코미디", "SF/판타지"].index(st.session_state["genre"]),
     )
 
-    st.markdown("""
-    <style>
-    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
-    @import url('https://cdn.jsdelivr.net/gh/projectnoonnu/2408-3@latest/Paperlogy.css');
-    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&display=swap');
+st.session_state["style_note"] = st.text_input(
+    "문체 지향",
+    value=st.session_state["style_note"],
+    placeholder="예: 시드니 셀던 스타일의 대중소설. 빠르고 선명한 문장. 영화적 장면감.",
+)
 
-    :root {
-        --navy: #191970; --y: #FFCB05; --bg: #F7F7F5;
-        --card: #FFFFFF; --card-border: #E2E2E0; --t: #1A1A2E;
-        --dim: #8E8E99; --light-bg: #EEEEF6;
-        --display: 'Playfair Display', 'Paperlogy', 'Georgia', serif;
-        --body: 'Pretendard', -apple-system, sans-serif;
-        --heading: 'Paperlogy', 'Pretendard', sans-serif;
-    }
-
-    html, body, [class*="css"] {
-        font-family: var(--body);
-        color: var(--t);
-        -webkit-font-smoothing: antialiased;
-    }
-
-    .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
-    [data-testid="stMainBlockContainer"], [data-testid="stHeader"],
-    [data-testid="stBottom"] {
-        background-color: var(--bg) !important;
-        color: var(--t) !important;
-    }
-
-    section[data-testid="stSidebar"] { display: none !important; }
-
-    .block-container {
-        padding-top: 2.2rem !important;
-        padding-bottom: 3rem !important;
-        max-width: 1200px !important;
-    }
-
-    .header {
-        font-size: 0.85rem;
-        font-weight: 700;
-        color: var(--navy);
-        letter-spacing: 0.15em;
-        font-family: var(--heading);
-        margin-bottom: 0.35rem;
-    }
-
-    .brand-title {
-        font-size: 2.7rem;
-        font-weight: 900;
-        color: var(--navy);
-        font-family: var(--display);
-        letter-spacing: -0.02em;
-        position: relative;
-        display: inline-block;
-        margin-bottom: 0.2rem;
-    }
-
-    .brand-title::after {
-        content: '';
-        position: absolute;
-        bottom: 2px;
-        left: 0;
-        width: 100%;
-        height: 4px;
-        background: var(--y);
-        border-radius: 2px;
-    }
-
-    .sub {
-        font-size: 0.74rem;
-        color: var(--dim);
-        letter-spacing: 0.15em;
-        margin-top: 0.35rem;
-        margin-bottom: 1.3rem;
-    }
-
-    .callout {
-        background: var(--light-bg);
-        border-left: 4px solid var(--navy);
-        padding: 0.95rem 1.1rem;
-        margin: 0.65rem 0 1.2rem 0;
-        border-radius: 0 8px 8px 0;
-        font-size: 0.92rem;
-        color: var(--t);
-    }
-
-    .section-header {
-        background: var(--y);
-        color: var(--navy);
-        padding: 0.68rem 1rem;
-        border-radius: 6px;
-        font-weight: 800;
-        font-size: 1rem;
-        font-family: var(--heading);
-        margin: 1.4rem 0 0.85rem 0;
-        display: flex;
-        justify-content: space-between;
-        align-items: center;
-    }
-
-    .section-header .en {
-        font-family: var(--display);
-        font-size: 0.78rem;
-        font-weight: 700;
-        letter-spacing: 0.05em;
-        opacity: 0.7;
-    }
-
-    .small-meta {
-        font-size: 0.8rem;
-        color: var(--dim);
-        margin-top: -0.15rem;
-        margin-bottom: 0.5rem;
-    }
-
-    .meta-chip-wrap {
-        display: flex;
-        gap: 0.6rem;
-        flex-wrap: wrap;
-        margin: 0.4rem 0 1rem 0;
-    }
-
-    .meta-chip {
-        display: inline-block;
-        padding: 0.36rem 0.75rem;
-        border-radius: 999px;
-        background: var(--card);
-        border: 1px solid var(--card-border);
-        color: var(--t);
-        font-size: 0.8rem;
-        font-weight: 700;
-    }
-
-    .status-note {
-        font-size: 0.83rem;
-        color: var(--dim);
-        margin: 0.45rem 0 1rem 0;
-    }
-
-    .stTextArea textarea {
-        background-color: var(--card) !important;
-        color: var(--t) !important;
-        border: 1.5px solid var(--card-border) !important;
-        border-radius: 8px !important;
-        font-family: var(--body) !important;
-        font-size: 0.92rem !important;
-        line-height: 1.55 !important;
-    }
-
-    .stDownloadButton > button {
-        color: var(--navy) !important;
-        border: 1.5px solid var(--y) !important;
-        background-color: var(--y) !important;
-        border-radius: 8px !important;
-        font-family: var(--body) !important;
-        font-weight: 800 !important;
-        font-size: 0.92rem !important;
-        padding: 0.62rem 1.25rem !important;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-    template_exists = os.path.exists("template.docx")
-
-    st.markdown('<div class="header">BLUE JEANS SCREENPLAY TOOLS</div>', unsafe_allow_html=True)
-    st.markdown('<div class="brand-title">Screenplay Converter</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub">TXT / DOCX → HOLLYWOOD SCREENPLAY FORMAT DOCX</div>', unsafe_allow_html=True)
-
+with st.expander("입력칸 설명 보기", expanded=False):
     st.markdown(
         """
-        <div class="callout">
-            원고 파일을 업로드하면 개발용 메타 텍스트를 제거하고,
-            씬 / 지문 / 인물명 / 대사를 정리해 헐리우드 표준에 가까운 DOCX로 변환합니다.
-        </div>
-        """,
-        unsafe_allow_html=True
+- **작품 개요**: 로그라인, 기획의도, 장르, 톤, 세계관, 차별점
+- **캐릭터**: 주인공, 적대자, 조력자, 관계, 욕망, 결핍, 비밀
+- **줄거리 / 트리트먼트**: 시작, 중반, 위기, 클라이맥스, 엔딩 방향
+- **추가 메모**: 꼭 살릴 장면, 약한 부분, 참고 작품, 조사 메모
+        """
     )
 
-    chip_text = "TEMPLATE READY" if template_exists else "NO TEMPLATE"
-    st.markdown(
-        f"""
-        <div class="meta-chip-wrap">
-            <div class="meta-chip">OUTPUT: DOCX</div>
-            <div class="meta-chip">STYLE: HOLLYWOOD</div>
-            <div class="meta-chip">{chip_text}</div>
-        </div>
-        """,
-        unsafe_allow_html=True
+col1, col2 = st.columns(2)
+with col1:
+    st.session_state["overview"] = st.text_area(
+        "작품 개요",
+        value=st.session_state["overview"],
+        height=210,
+        placeholder="로그라인 / 기획의도 / 세계관 / 작품의 핵심 질문 / 차별점",
+    )
+    st.session_state["synopsis"] = st.text_area(
+        "줄거리 / 트리트먼트",
+        value=st.session_state["synopsis"],
+        height=230,
+        placeholder="전체 줄거리, 주요 사건, 반전, 엔딩 방향",
+    )
+with col2:
+    st.session_state["characters"] = st.text_area(
+        "캐릭터",
+        value=st.session_state["characters"],
+        height=210,
+        placeholder="주인공 / 적대자 / 조력자 / 관계 구조 / 욕망 / 결핍 / 비밀",
+    )
+    st.session_state["extra_notes"] = st.text_area(
+        "추가 메모 (선택)",
+        value=st.session_state["extra_notes"],
+        height=230,
+        placeholder="꼭 살릴 장면, 약한 부분, 참고 문체, 조사 자료, 산업 디테일",
     )
 
-    st.markdown(
-        '<div class="section-header"><span>원고 업로드</span><span class="en">INPUT</span></div>',
-        unsafe_allow_html=True
-    )
-    st.markdown('<div class="small-meta">지원 형식: .txt, .docx</div>', unsafe_allow_html=True)
 
-    uploaded_file = st.file_uploader(
-        "원고 파일 업로드",
-        type=["txt", "docx"],
-        label_visibility="collapsed"
-    )
+# ─────────────────────────────────────
+# STEP 2
+# ─────────────────────────────────────
+st.markdown(
+    '<div class="section-header">STEP 2 · 분석과 설계 <span class="en">ONE CLICK</span></div>',
+    unsafe_allow_html=True,
+)
 
-    if not uploaded_file:
-        st.info("파일을 업로드하면 변환 결과와 DOCX 다운로드 버튼이 표시됩니다.")
-        return
+st.markdown(
+    '<div class="small-meta">프로그램이 자동으로 통합 분석 → 부족한 점 진단 → 전체 줄거리 보강 → 12 Unit 설계를 순서대로 진행합니다.</div>',
+    unsafe_allow_html=True,
+)
 
-    try:
-        raw_lines, cleaned_lines, blocks, scenes = process_uploaded_file(uploaded_file)
-    except Exception as e:
-        st.error(f"처리 중 오류가 발생했습니다: {e}")
-        return
+btn_c1, btn_c2, btn_c3, btn_c4 = st.columns(4)
 
-    st.markdown(
-        '<div class="section-header"><span>변환 미리보기</span><span class="en">PREVIEW</span></div>',
-        unsafe_allow_html=True
-    )
-
-    st.markdown(
-        f"""
-        <div class="status-note">
-            원문 {len(raw_lines)}줄 → 정리 {len(cleaned_lines)}줄 ·
-            블록 {len(blocks)}개 · 씬 {len(scenes)}개 감지
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-        st.markdown("**원문 추출**")
-        st.text_area(
-            "원문 추출",
-            value="\n".join(raw_lines),
-            height=560,
-            label_visibility="collapsed"
+with btn_c1:
+    if st.button("기획서 통합 분석", type="primary", use_container_width=True):
+        prompt_text = build_intake_merge_prompt(
+            title=st.session_state["title"],
+            genre=st.session_state["genre"],
+            style_note=st.session_state["style_note"],
+            chunks=chunks(),
         )
+        generate_to_state("merged_summary", prompt_text, "기획서를 하나의 통합 요약으로 분석 중…", tokens=7000)
 
-    with col2:
-        st.markdown("**구조화 결과**")
-        st.text_area(
-            "구조화 결과",
-            value=build_preview_text(scenes),
-            height=560,
-            label_visibility="collapsed"
+with btn_c2:
+    if st.button("부족한 점 진단", use_container_width=True, disabled=not st.session_state["merged_summary"]):
+        prompt_text = build_gap_diagnosis_prompt(
+            title=st.session_state["title"],
+            genre=st.session_state["genre"],
+            merged_summary=st.session_state["merged_summary"],
         )
+        generate_to_state("gap_report", prompt_text, "장편화에 부족한 점을 진단 중…", tokens=7000)
 
+with btn_c3:
+    if st.button(
+        "전체 줄거리 보강",
+        use_container_width=True,
+        disabled=not (st.session_state["merged_summary"] and st.session_state["gap_report"]),
+    ):
+        prompt_text = build_story_reinforcement_prompt(
+            title=st.session_state["title"],
+            genre=st.session_state["genre"],
+            merged_summary=st.session_state["merged_summary"],
+            gap_report=st.session_state["gap_report"],
+        )
+        generate_to_state("reinforced_story", prompt_text, "장편소설용 전체 줄거리를 보강 중…", tokens=8000)
+
+with btn_c4:
+    if st.button(
+        "12 Unit 설계",
+        use_container_width=True,
+        disabled=not st.session_state["reinforced_story"],
+    ):
+        prompt_text = build_unit_plan_prompt(
+            title=st.session_state["title"],
+            genre=st.session_state["genre"],
+            reinforced_story=st.session_state["reinforced_story"],
+        )
+        generate_to_state("unit_plan", prompt_text, "12 Unit 구조를 설계 중…", tokens=9000)
+
+if st.session_state["merged_summary"]:
+    st.markdown('<div class="output-card">', unsafe_allow_html=True)
+    st.subheader("통합 분석")
+    st.markdown(st.session_state["merged_summary"])
+    st.markdown('</div>', unsafe_allow_html=True)
+
+if st.session_state["gap_report"]:
+    st.markdown('<div class="output-card">', unsafe_allow_html=True)
+    st.subheader("부족한 점 진단")
+    st.markdown(st.session_state["gap_report"])
+    st.markdown('</div>', unsafe_allow_html=True)
+
+if st.session_state["reinforced_story"]:
+    st.markdown('<div class="output-card">', unsafe_allow_html=True)
+    st.subheader("전체 줄거리 보강")
+    st.markdown(st.session_state["reinforced_story"])
+    st.markdown('</div>', unsafe_allow_html=True)
+
+if st.session_state["unit_plan"]:
+    st.markdown('<div class="output-card">', unsafe_allow_html=True)
+    st.subheader("12 Unit 설계")
+    st.markdown(st.session_state["unit_plan"])
+    st.markdown('</div>', unsafe_allow_html=True)
+
+
+# ─────────────────────────────────────
+# STEP 3
+# ─────────────────────────────────────
+st.markdown(
+    '<div class="section-header">STEP 3 · Unit 원고 작성 <span class="en">WRITE UNIT BY UNIT</span></div>',
+    unsafe_allow_html=True,
+)
+
+u1, u2, u3 = st.columns([1, 1, 1.2])
+with u1:
+    st.session_state["selected_unit"] = st.selectbox(
+        "작성할 Unit 번호",
+        list(range(1, 13)),
+        index=int(st.session_state["selected_unit"]) - 1,
+    )
+with u2:
+    st.session_state["rewrite_mode"] = st.selectbox(
+        "리라이트 방향",
+        [
+            "더 상업적으로",
+            "더 빠르게",
+            "더 감정적으로",
+            "더 차갑게",
+            "더 스릴러답게",
+            "더 여성서사 중심으로",
+            "더 영상적으로",
+        ],
+        index=[
+            "더 상업적으로",
+            "더 빠르게",
+            "더 감정적으로",
+            "더 차갑게",
+            "더 스릴러답게",
+            "더 여성서사 중심으로",
+            "더 영상적으로",
+        ].index(st.session_state["rewrite_mode"]),
+    )
+with u3:
     st.markdown(
-        '<div class="section-header"><span>출력 파일</span><span class="en">EXPORT</span></div>',
-        unsafe_allow_html=True
+        '<div class="mini-guide"><strong>Unit 작성 원칙</strong><br>한 번에 장편 전체를 쓰지 않고, Unit 단위로 작성합니다. 먼저 Unit 01부터 시작한 뒤 순서대로 진행하는 방식이 가장 안정적입니다.</div>',
+        unsafe_allow_html=True,
     )
 
-    try:
-        output_bytes = export_scenes_to_docx(scenes, template_path="template.docx")
-    except Exception as e:
-        st.error(f"DOCX 생성 중 오류가 발생했습니다: {e}")
-        return
+unit_btn1, unit_btn2 = st.columns(2)
+with unit_btn1:
+    if st.button(
+        f"Unit {st.session_state['selected_unit']:02d} 원고 생성",
+        type="primary",
+        use_container_width=True,
+        disabled=not st.session_state["unit_plan"],
+    ):
+        unit_no = int(st.session_state["selected_unit"])
+        prompt_text = build_unit_draft_prompt(
+            title=st.session_state["title"],
+            genre=st.session_state["genre"],
+            style_note=st.session_state["style_note"],
+            reinforced_story=st.session_state["reinforced_story"],
+            unit_plan=st.session_state["unit_plan"],
+            unit_number=unit_no,
+            previous_unit_summary=previous_unit_summary(unit_no),
+        )
+        st.markdown(
+            f'<div class="callout"><div class="cl">WRITING</div>Unit {unit_no:02d} 원고를 작성 중…</div>',
+            unsafe_allow_html=True,
+        )
+        result = st.write_stream(stream_ai(prompt_text, tokens=9000))
+        drafts = dict(st.session_state["unit_drafts"])
+        drafts[unit_no] = result or ""
+        st.session_state["unit_drafts"] = drafts
+        st.rerun()
 
-    st.download_button(
-        label="DOCX 다운로드",
-        data=output_bytes,
-        file_name=DEFAULT_OUTPUT_NAME,
-        mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
-    )
+with unit_btn2:
+    selected_text = st.session_state["unit_drafts"].get(int(st.session_state["selected_unit"]), "")
+    if st.button(
+        f"Unit {st.session_state['selected_unit']:02d} 다시 쓰기",
+        use_container_width=True,
+        disabled=not bool(selected_text),
+    ):
+        unit_no = int(st.session_state["selected_unit"])
+        prompt_text = build_rewrite_prompt(
+            mode=st.session_state["rewrite_mode"],
+            text=st.session_state["unit_drafts"].get(unit_no, ""),
+        )
+        st.markdown(
+            f'<div class="callout"><div class="cl">REWRITE</div>Unit {unit_no:02d} 원고를 다시 쓰는 중…</div>',
+            unsafe_allow_html=True,
+        )
+        result = st.write_stream(stream_ai(prompt_text, tokens=9000))
+        drafts = dict(st.session_state["unit_drafts"])
+        drafts[unit_no] = result or ""
+        st.session_state["unit_drafts"] = drafts
+        st.rerun()
+
+if st.session_state["unit_drafts"]:
+    for unit_no in sorted(st.session_state["unit_drafts"].keys()):
+        with st.expander(f"Unit {unit_no:02d} 원고 보기", expanded=(unit_no == int(st.session_state["selected_unit"]))):
+            st.markdown(st.session_state["unit_drafts"][unit_no])
 
 
-if __name__ == "__main__":
-    main()
+# ─────────────────────────────────────
+# STEP 4
+# ─────────────────────────────────────
+st.markdown(
+    '<div class="section-header">STEP 4 · 저장 <span class="en">DOWNLOAD</span></div>',
+    unsafe_allow_html=True,
+)
+
+compiled_text = all_outputs_text()
+if compiled_text.strip():
+    ts = datetime.now().strftime("%Y%m%d_%H%M")
+    filename_base = (st.session_state["title"] or "novel_project").replace(" ", "_")
+
+    dl1, dl2 = st.columns(2)
+    with dl1:
+        st.download_button(
+            label="TXT 저장",
+            data=compiled_text,
+            file_name=f"{filename_base}_{ts}.txt",
+            mime="text/plain",
+            use_container_width=True,
+        )
+    with dl2:
+        try:
+            docx_bytes = make_docx_bytes(st.session_state["title"], st.session_state["genre"], compiled_text)
+            st.download_button(
+                label="DOCX 저장",
+                data=docx_bytes,
+                file_name=f"{filename_base}_{ts}.docx",
+                mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+                use_container_width=True,
+            )
+        except ImportError:
+            st.caption("DOCX 저장을 위해 python-docx 설치가 필요합니다.")
+else:
+    st.caption("아직 저장할 결과가 없습니다. 먼저 분석 또는 Unit 원고를 생성해 주세요.")
+
+
+# ─────────────────────────────────────
+# Footer
+# ─────────────────────────────────────
+st.markdown("---")
+fc1, fc2 = st.columns([3, 1])
+with fc2:
+    if st.button("전체 초기화", use_container_width=True):
+        for key in list(st.session_state.keys()):
+            del st.session_state[key]
+        st.rerun()
+
+st.caption("© 2026 BLUE JEANS PICTURES · Novel Engine v1.1")
