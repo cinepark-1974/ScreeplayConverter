@@ -598,9 +598,16 @@ def main():
 
     template_exists = os.path.exists("template.docx")
 
-    st.markdown('<div class="header">BLUE JEANS SCREENPLAY TOOLS</div>', unsafe_allow_html=True)
-    st.markdown('<div class="brand-title">Screenplay Converter</div>', unsafe_allow_html=True)
-    st.markdown('<div class="sub">TXT / DOCX → HOLLYWOOD SCREENPLAY FORMAT DOCX</div>', unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="brand-wrap">
+            <div class="header">BLUE JEANS SCREENPLAY TOOLS</div>
+            <div class="brand-title">Screenplay Converter</div>
+            <div class="sub">TXT / DOCX → HOLLYWOOD SCREENPLAY FORMAT DOCX</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
 
     st.markdown(
         """
