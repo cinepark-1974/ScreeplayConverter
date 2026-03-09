@@ -7,6 +7,7 @@ from typing import List, Optional, Tuple
 
 import streamlit as st
 from docx import Document
+from docx.enum.style import WD_STYLE_TYPE
 
 from ui_style import APP_CSS
 
@@ -420,18 +421,23 @@ def clear_document_body(doc: Document) -> None:
         body.remove(child)
 
 
-def style_exists(doc: Document, style_name: str) -> bool:
+def get_paragraph_style_name(doc: Document, style_name: str) -> Optional[str]:
     try:
-        _ = doc.styles[style_name]
-        return True
+        style = doc.styles[style_name]
     except KeyError:
-        return False
+        return None
+
+    if style.type == WD_STYLE_TYPE.PARAGRAPH:
+        return style_name
+
+    return None
 
 
 def add_styled_paragraph(doc: Document, text: str, preferred_style: str):
     p = doc.add_paragraph(text)
-    if style_exists(doc, preferred_style):
-        p.style = preferred_style
+    paragraph_style_name = get_paragraph_style_name(doc, preferred_style)
+    if paragraph_style_name:
+        p.style = paragraph_style_name
     return p
 
 
@@ -446,16 +452,7 @@ def build_dialogue_line(character: str, dialogue: str) -> str:
 
 
 def scene_to_korean_blocks(scene: Scene) -> List[Tuple[str, str]]:
-    """
-    Returns list of (style_name, text)
-    style_name is one of:
-    - S#1. 씬번호
-    - 각본지문
-    - 각본대사
-    """
     results: List[Tuple[str, str]] = []
-
-    # scene heading: code writes only heading text; Word style handles scene numbering
     results.append((STYLE_SCENE, scene.heading))
 
     pending_character: Optional[str] = None
@@ -464,7 +461,6 @@ def scene_to_korean_blocks(scene: Scene) -> List[Tuple[str, str]]:
     for block in scene.blocks:
         if block.kind == "action":
             if pending_character:
-                # character without spoken line: flush name only
                 results.append((STYLE_DIALOGUE, pending_character))
                 pending_character = None
                 pending_parenthetical = None
@@ -477,8 +473,6 @@ def scene_to_korean_blocks(scene: Scene) -> List[Tuple[str, str]]:
             pending_parenthetical = None
 
         elif block.kind == "parenthetical":
-            # user said parenthetical is rare and can be handled manually.
-            # keep temporarily and append inline if a dialogue line follows.
             pending_parenthetical = block.text
 
         elif block.kind == "dialogue":
@@ -491,7 +485,6 @@ def scene_to_korean_blocks(scene: Scene) -> List[Tuple[str, str]]:
                 pending_character = None
                 pending_parenthetical = None
             else:
-                # fallback: dialogue line without explicit speaker
                 results.append((STYLE_DIALOGUE, block.text))
 
         elif block.kind == "transition":
@@ -518,14 +511,14 @@ def export_scenes_to_docx(
     doc = try_load_template(template_path)
     clear_document_body(doc)
 
-    for scene in scenes:
+    for idx, scene in enumerate(scenes):
         styled_blocks = scene_to_korean_blocks(scene)
 
         for style_name, text in styled_blocks:
             add_styled_paragraph(doc, text, style_name)
 
-        # scene spacing: rely on style if possible, but keep one blank paragraph
-        doc.add_paragraph("")
+        if idx < len(scenes) - 1:
+            doc.add_paragraph("")
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -619,7 +612,7 @@ def process_uploaded_file(uploaded_file) -> Tuple[List[str], List[str], List[Blo
 
 def main():
     st.set_page_config(
-        page_title="Screenplay Converter",
+        page_title=APP_TITLE,
         layout="wide",
         initial_sidebar_state="collapsed"
     )
