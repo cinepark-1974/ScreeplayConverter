@@ -10,6 +10,7 @@ from docx import Document
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.shared import Inches, Pt
 
+
 # =========================================================
 # Models
 # =========================================================
@@ -19,10 +20,12 @@ class Block:
     kind: str  # scene_heading, action, character, dialogue, parenthetical, transition
     text: str
 
+
 @dataclass
 class Scene:
     heading: str
     blocks: List[Block] = field(default_factory=list)
+
 
 # =========================================================
 # Constants
@@ -89,6 +92,7 @@ LOCATION_CUE_WORDS = [
     "HOSPITAL", "ELEVATOR", "BATHROOM"
 ]
 
+
 # =========================================================
 # Text helpers
 # =========================================================
@@ -100,10 +104,12 @@ def normalize_text(text: str) -> str:
     text = text.replace("‘", "'").replace("’", "'")
     return text
 
+
 def normalize_line(line: str) -> str:
     line = normalize_text(line)
     line = re.sub(r"[ \t]+", " ", line)
     return line.strip()
+
 
 def looks_like_divider(line: str) -> bool:
     s = normalize_line(line)
@@ -111,15 +117,18 @@ def looks_like_divider(line: str) -> bool:
         return False
     return any(re.match(p, s, flags=re.IGNORECASE) for p in DIVIDER_PATTERNS)
 
+
 def looks_like_meta(line: str) -> bool:
     s = normalize_line(line)
     if not s:
         return False
     return any(re.match(p, s, flags=re.IGNORECASE) for p in META_PATTERNS)
 
+
 def looks_like_transition(line: str) -> bool:
     s = normalize_line(line)
     return any(re.match(p, s, flags=re.IGNORECASE) for p in TRANSITION_PATTERNS)
+
 
 def looks_like_scene_heading(line: str) -> bool:
     s = normalize_line(line)
@@ -129,13 +138,12 @@ def looks_like_scene_heading(line: str) -> bool:
     if any(re.match(p, s, flags=re.IGNORECASE) for p in SCENE_PATTERNS):
         return True
 
-    # Korean location/time style:
-    # 예: 옥상 - 밤 / 병원 복도 / 새벽
     if any(word in s for word in LOCATION_CUE_WORDS):
         if any(t in s.upper() for t in TIME_WORDS) or " - " in s or " / " in s:
             return True
 
     return False
+
 
 def strip_scene_number_prefix(line: str) -> str:
     s = normalize_line(line)
@@ -143,15 +151,18 @@ def strip_scene_number_prefix(line: str) -> str:
     s = re.sub(r"^\s*SCENE\s+\d+\.?\s*", "", s, flags=re.IGNORECASE)
     return s.strip()
 
+
 def canonical_scene_heading(line: str) -> str:
     s = strip_scene_number_prefix(line)
     s = s.upper()
     s = re.sub(r"\s+", " ", s)
     return s
 
+
 def looks_like_parenthetical(line: str) -> bool:
     s = normalize_line(line)
     return bool(re.match(r"^\(.*\)$", s))
+
 
 def is_probable_character_name(line: str) -> bool:
     s = normalize_line(line)
@@ -164,15 +175,14 @@ def is_probable_character_name(line: str) -> bool:
     if re.search(r"[.!?]", s):
         return False
 
-    # English uppercase name
     if s.upper() == s and re.search(r"[A-Z]", s):
         return True
 
-    # Korean short name / role
     if re.fullmatch(r"[가-힣A-Za-z0-9# ]{1,12}", s):
         return True
 
     return False
+
 
 def split_lines_from_text(text: str) -> List[str]:
     text = normalize_text(text)
@@ -190,7 +200,6 @@ def split_lines_from_text(text: str) -> List[str]:
         blank_streak = 0
         lines.append(line)
 
-    # trim edge blanks
     while lines and lines[0] == "":
         lines.pop(0)
     while lines and lines[-1] == "":
@@ -198,15 +207,19 @@ def split_lines_from_text(text: str) -> List[str]:
 
     return lines
 
+
 # =========================================================
 # Input readers
 # =========================================================
 
 def read_txt_file(uploaded_file) -> List[str]:
+    uploaded_file.seek(0)
     content = uploaded_file.read().decode("utf-8", errors="ignore")
     return split_lines_from_text(content)
 
+
 def read_docx_file(uploaded_file) -> List[str]:
+    uploaded_file.seek(0)
     with tempfile.NamedTemporaryFile(delete=False, suffix=".docx") as tmp:
         tmp.write(uploaded_file.read())
         tmp_path = tmp.name
@@ -219,6 +232,7 @@ def read_docx_file(uploaded_file) -> List[str]:
     finally:
         if os.path.exists(tmp_path):
             os.remove(tmp_path)
+
 
 # =========================================================
 # Cleaning
@@ -236,7 +250,6 @@ def remove_meta_and_noise(lines: List[str]) -> List[str]:
             continue
         cleaned.append(line)
 
-    # collapse repeated blanks
     collapsed: List[str] = []
     prev_blank = False
     for line in cleaned:
@@ -252,6 +265,7 @@ def remove_meta_and_noise(lines: List[str]) -> List[str]:
         collapsed.pop()
 
     return collapsed
+
 
 # =========================================================
 # Classification and structure
@@ -288,16 +302,15 @@ def classify_lines(lines: List[str]) -> List[Block]:
             blocks.append(Block("parenthetical", normalize_line(line)))
             continue
 
-        # Dialogue mode
         if mode == "dialogue":
             blocks.append(Block("dialogue", normalize_line(line)))
             continue
 
-        # Fallback: action
         blocks.append(Block("action", normalize_line(line)))
         mode = None
 
     return merge_adjacent_blocks(blocks)
+
 
 def merge_adjacent_blocks(blocks: List[Block]) -> List[Block]:
     if not blocks:
@@ -311,12 +324,10 @@ def merge_adjacent_blocks(blocks: List[Block]) -> List[Block]:
 
         prev = merged[-1]
 
-        # merge adjacent action blocks
         if prev.kind == "action" and block.kind == "action":
             prev.text = f"{prev.text} {block.text}".strip()
             continue
 
-        # merge adjacent dialogue lines under same speaker if parenthetical not in between
         if prev.kind == "dialogue" and block.kind == "dialogue":
             prev.text = f"{prev.text} {block.text}".strip()
             continue
@@ -324,6 +335,7 @@ def merge_adjacent_blocks(blocks: List[Block]) -> List[Block]:
         merged.append(block)
 
     return merged
+
 
 def blocks_to_scenes(blocks: List[Block]) -> List[Scene]:
     scenes: List[Scene] = []
@@ -346,6 +358,7 @@ def blocks_to_scenes(blocks: List[Block]) -> List[Scene]:
 
     return scenes
 
+
 # =========================================================
 # DOCX Export
 # =========================================================
@@ -355,21 +368,24 @@ def try_load_template(template_path: str) -> Document:
         return Document(template_path)
     return Document()
 
+
 def clear_document_body(doc: Document) -> None:
     body = doc._element.body
     for child in list(body):
         body.remove(child)
 
+
 def set_document_defaults(doc: Document) -> None:
     section = doc.sections[0]
-    section.top_margin = Inches(1)
-    section.bottom_margin = Inches(1)
-    section.left_margin = Inches(1.2)
-    section.right_margin = Inches(1)
+    section.top_margin = Inches(1.0)
+    section.bottom_margin = Inches(1.0)
+    section.left_margin = Inches(1.5)
+    section.right_margin = Inches(1.0)
 
     style = doc.styles["Normal"]
     style.font.name = "Courier New"
     style.font.size = Pt(12)
+
 
 def add_paragraph(
     doc: Document,
@@ -401,6 +417,7 @@ def add_paragraph(
     run.font.size = Pt(12)
     return p
 
+
 def export_scenes_to_docx(
     scenes: List[Scene],
     template_path: str = "template.docx",
@@ -409,7 +426,6 @@ def export_scenes_to_docx(
     clear_document_body(doc)
     set_document_defaults(doc)
 
-    # Title page
     add_paragraph(
         doc,
         "SCREENPLAY",
@@ -426,7 +442,6 @@ def export_scenes_to_docx(
     )
     doc.add_page_break()
 
-    # Body
     for scene in scenes:
         add_paragraph(
             doc,
@@ -491,6 +506,7 @@ def export_scenes_to_docx(
     buffer.seek(0)
     return buffer.getvalue()
 
+
 # =========================================================
 # Preview helpers
 # =========================================================
@@ -501,18 +517,10 @@ def build_preview_text(scenes: List[Scene]) -> str:
         parts.append(scene.heading)
         parts.append("")
         for block in scene.blocks:
-            if block.kind == "action":
-                parts.append(block.text)
-            elif block.kind == "character":
-                parts.append(block.text)
-            elif block.kind == "parenthetical":
-                parts.append(block.text)
-            elif block.kind == "dialogue":
-                parts.append(block.text)
-            elif block.kind == "transition":
-                parts.append(block.text)
+            parts.append(block.text)
             parts.append("")
     return "\n".join(parts).strip()
+
 
 def process_uploaded_file(uploaded_file) -> Tuple[List[str], List[str], List[Block], List[Scene]]:
     ext = os.path.splitext(uploaded_file.name)[1].lower()
@@ -529,28 +537,214 @@ def process_uploaded_file(uploaded_file) -> Tuple[List[str], List[str], List[Blo
     scenes = blocks_to_scenes(blocks)
     return raw_lines, cleaned_lines, blocks, scenes
 
+
 # =========================================================
 # Streamlit UI
 # =========================================================
 
 def main():
-    st.set_page_config(page_title=APP_TITLE, layout="wide")
-    st.title(APP_TITLE)
-    st.caption("TXT / DOCX 원고를 읽어 헐리우드 표준에 가까운 DOCX 시나리오로 변환합니다.")
+    st.set_page_config(
+        page_title="Screenplay Converter",
+        layout="wide",
+        initial_sidebar_state="collapsed"
+    )
 
-    with st.sidebar:
-        st.subheader("설정")
-        template_exists = os.path.exists("template.docx")
-        st.write(f"template.docx 사용 가능: {'Yes' if template_exists else 'No'}")
-        st.write("템플릿이 없으면 기본 DOCX 스타일로 출력합니다.")
+    st.markdown("""
+    <style>
+    @import url('https://cdn.jsdelivr.net/gh/orioncactus/pretendard/dist/web/static/pretendard.css');
+    @import url('https://cdn.jsdelivr.net/gh/projectnoonnu/2408-3@latest/Paperlogy.css');
+    @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&display=swap');
+
+    :root {
+        --navy: #191970; --y: #FFCB05; --bg: #F7F7F5;
+        --card: #FFFFFF; --card-border: #E2E2E0; --t: #1A1A2E;
+        --dim: #8E8E99; --light-bg: #EEEEF6;
+        --display: 'Playfair Display', 'Paperlogy', 'Georgia', serif;
+        --body: 'Pretendard', -apple-system, sans-serif;
+        --heading: 'Paperlogy', 'Pretendard', sans-serif;
+    }
+
+    html, body, [class*="css"] {
+        font-family: var(--body);
+        color: var(--t);
+        -webkit-font-smoothing: antialiased;
+    }
+
+    .stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
+    [data-testid="stMainBlockContainer"], [data-testid="stHeader"],
+    [data-testid="stBottom"] {
+        background-color: var(--bg) !important;
+        color: var(--t) !important;
+    }
+
+    section[data-testid="stSidebar"] { display: none !important; }
+
+    .block-container {
+        padding-top: 2.2rem !important;
+        padding-bottom: 3rem !important;
+        max-width: 1200px !important;
+    }
+
+    .header {
+        font-size: 0.85rem;
+        font-weight: 700;
+        color: var(--navy);
+        letter-spacing: 0.15em;
+        font-family: var(--heading);
+        margin-bottom: 0.35rem;
+    }
+
+    .brand-title {
+        font-size: 2.7rem;
+        font-weight: 900;
+        color: var(--navy);
+        font-family: var(--display);
+        letter-spacing: -0.02em;
+        position: relative;
+        display: inline-block;
+        margin-bottom: 0.2rem;
+    }
+
+    .brand-title::after {
+        content: '';
+        position: absolute;
+        bottom: 2px;
+        left: 0;
+        width: 100%;
+        height: 4px;
+        background: var(--y);
+        border-radius: 2px;
+    }
+
+    .sub {
+        font-size: 0.74rem;
+        color: var(--dim);
+        letter-spacing: 0.15em;
+        margin-top: 0.35rem;
+        margin-bottom: 1.3rem;
+    }
+
+    .callout {
+        background: var(--light-bg);
+        border-left: 4px solid var(--navy);
+        padding: 0.95rem 1.1rem;
+        margin: 0.65rem 0 1.2rem 0;
+        border-radius: 0 8px 8px 0;
+        font-size: 0.92rem;
+        color: var(--t);
+    }
+
+    .section-header {
+        background: var(--y);
+        color: var(--navy);
+        padding: 0.68rem 1rem;
+        border-radius: 6px;
+        font-weight: 800;
+        font-size: 1rem;
+        font-family: var(--heading);
+        margin: 1.4rem 0 0.85rem 0;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+
+    .section-header .en {
+        font-family: var(--display);
+        font-size: 0.78rem;
+        font-weight: 700;
+        letter-spacing: 0.05em;
+        opacity: 0.7;
+    }
+
+    .small-meta {
+        font-size: 0.8rem;
+        color: var(--dim);
+        margin-top: -0.15rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .meta-chip-wrap {
+        display: flex;
+        gap: 0.6rem;
+        flex-wrap: wrap;
+        margin: 0.4rem 0 1rem 0;
+    }
+
+    .meta-chip {
+        display: inline-block;
+        padding: 0.36rem 0.75rem;
+        border-radius: 999px;
+        background: var(--card);
+        border: 1px solid var(--card-border);
+        color: var(--t);
+        font-size: 0.8rem;
+        font-weight: 700;
+    }
+
+    .stTextArea textarea {
+        background-color: var(--card) !important;
+        color: var(--t) !important;
+        border: 1.5px solid var(--card-border) !important;
+        border-radius: 8px !important;
+        font-family: var(--body) !important;
+        font-size: 0.92rem !important;
+    }
+
+    .stDownloadButton > button {
+        color: var(--navy) !important;
+        border: 1.5px solid var(--y) !important;
+        background-color: var(--y) !important;
+        border-radius: 8px !important;
+        font-family: var(--body) !important;
+        font-weight: 800 !important;
+        font-size: 0.92rem !important;
+        padding: 0.62rem 1.25rem !important;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    template_exists = os.path.exists("template.docx")
+
+    st.markdown('<div class="header">BLUE JEANS SCREENPLAY TOOLS</div>', unsafe_allow_html=True)
+    st.markdown('<div class="brand-title">Screenplay Converter</div>', unsafe_allow_html=True)
+    st.markdown('<div class="sub">TXT / DOCX → HOLLYWOOD SCREENPLAY FORMAT DOCX</div>', unsafe_allow_html=True)
+
+    st.markdown(
+        """
+        <div class="callout">
+            원고 파일을 업로드하면 개발용 메타 텍스트를 제거하고,
+            씬 / 지문 / 인물명 / 대사를 정리해 헐리우드 표준에 가까운 DOCX로 변환합니다.
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    chip_text = "TEMPLATE READY" if template_exists else "NO TEMPLATE"
+    st.markdown(
+        f"""
+        <div class="meta-chip-wrap">
+            <div class="meta-chip">OUTPUT: DOCX</div>
+            <div class="meta-chip">STYLE: HOLLYWOOD</div>
+            <div class="meta-chip">{chip_text}</div>
+        </div>
+        """,
+        unsafe_allow_html=True
+    )
+
+    st.markdown(
+        '<div class="section-header"><span>원고 업로드</span><span class="en">INPUT</span></div>',
+        unsafe_allow_html=True
+    )
+    st.markdown('<div class="small-meta">지원 형식: .txt, .docx</div>', unsafe_allow_html=True)
 
     uploaded_file = st.file_uploader(
-        "원고 파일 업로드 (.txt 또는 .docx)",
-        type=["txt", "docx"]
+        "원고 파일 업로드",
+        type=["txt", "docx"],
+        label_visibility="collapsed"
     )
 
     if not uploaded_file:
-        st.info("파일을 업로드하면 변환 결과와 다운로드 버튼이 표시됩니다.")
+        st.info("파일을 업로드하면 변환 결과와 DOCX 다운로드 버튼이 표시됩니다.")
         return
 
     try:
@@ -559,21 +753,46 @@ def main():
         st.error(f"처리 중 오류가 발생했습니다: {e}")
         return
 
+    st.markdown(
+        '<div class="section-header"><span>분석 요약</span><span class="en">SUMMARY</span></div>',
+        unsafe_allow_html=True
+    )
+
+    s1, s2, s3, s4 = st.columns(4)
+    s1.metric("원문 줄 수", len(raw_lines))
+    s2.metric("정리 후 줄 수", len(cleaned_lines))
+    s3.metric("블록 수", len(blocks))
+    s4.metric("씬 수", len(scenes))
+
+    st.markdown(
+        '<div class="section-header"><span>변환 미리보기</span><span class="en">PREVIEW</span></div>',
+        unsafe_allow_html=True
+    )
+
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("전처리 전")
-        st.text_area("원문 추출", value="\n".join(raw_lines), height=500)
+        st.markdown("**원문 추출**")
+        st.text_area(
+            "원문 추출",
+            value="\n".join(raw_lines),
+            height=520,
+            label_visibility="collapsed"
+        )
 
     with col2:
-        st.subheader("전처리 후 / 구조화 결과")
-        st.text_area("변환 미리보기", value=build_preview_text(scenes), height=500)
+        st.markdown("**구조화 결과**")
+        st.text_area(
+            "구조화 결과",
+            value=build_preview_text(scenes),
+            height=520,
+            label_visibility="collapsed"
+        )
 
-    st.subheader("분석 결과")
-    st.write(f"- 원문 줄 수: {len(raw_lines)}")
-    st.write(f"- 전처리 후 줄 수: {len(cleaned_lines)}")
-    st.write(f"- 블록 수: {len(blocks)}")
-    st.write(f"- 씬 수: {len(scenes)}")
+    st.markdown(
+        '<div class="section-header"><span>출력 파일</span><span class="en">EXPORT</span></div>',
+        unsafe_allow_html=True
+    )
 
     output_bytes = export_scenes_to_docx(scenes, template_path="template.docx")
 
@@ -583,6 +802,7 @@ def main():
         file_name=DEFAULT_OUTPUT_NAME,
         mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     )
+
 
 if __name__ == "__main__":
     main()
