@@ -29,9 +29,49 @@ html, body, [class*="css"] {
 section[data-testid="stSidebar"] { display: none !important; }
 
 .block-container {
-    padding-top: 2.4rem !important;
+    padding-top: 4.8rem !important;
     padding-bottom: 3.2rem !important;
     max-width: 1120px !important;
+}
+
+[data-testid="stAppViewContainer"] {
+    padding-top: 0.5rem !important;
+}
+
+[data-testid="stHeader"] {
+    background: transparent !important;
+}
+
+.brand-wrap {
+    padding-top: 0.8rem;
+    margin-bottom: 0.6rem;
+}
+
+.header {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: var(--navy);
+    letter-spacing: 0.15em;
+    font-family: var(--heading);
+    margin-top: 0.8rem;
+    margin-bottom: 0.65rem;
+    line-height: 1.5;
+}
+
+.brand-title {
+    font-size: 2.45rem;
+    font-weight: 900;
+    color: var(--navy);
+    font-family: var(--display);
+    letter-spacing: -0.02em;
+    position: relative;
+    display: inline-block;
+    line-height: 1.28;
+    padding-top: 0.16em;
+    padding-bottom: 0.16em;
+    margin-top: 0.15rem;
+    margin-bottom: 0.35rem;
+    overflow: visible !important;
 }
 
 .header {
