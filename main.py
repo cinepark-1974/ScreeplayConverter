@@ -372,15 +372,20 @@ def try_load_template(template_path: str) -> Document:
 def clear_document_body(doc: Document) -> None:
     body = doc._element.body
     for child in list(body):
+        if child.tag.endswith("sectPr"):
+            continue
         body.remove(child)
 
 
 def set_document_defaults(doc: Document) -> None:
-    section = doc.sections[0]
-    section.top_margin = Inches(1.0)
-    section.bottom_margin = Inches(1.0)
-    section.left_margin = Inches(1.5)
-    section.right_margin = Inches(1.0)
+    try:
+        section = doc.sections[0]
+        section.top_margin = Inches(1.0)
+        section.bottom_margin = Inches(1.0)
+        section.left_margin = Inches(1.5)
+        section.right_margin = Inches(1.0)
+    except IndexError:
+        pass
 
     style = doc.styles["Normal"]
     style.font.name = "Courier New"
@@ -681,6 +686,12 @@ def main():
         font-weight: 700;
     }
 
+    .status-note {
+        font-size: 0.83rem;
+        color: var(--dim);
+        margin: 0.45rem 0 1rem 0;
+    }
+
     .stTextArea textarea {
         background-color: var(--card) !important;
         color: var(--t) !important;
@@ -688,6 +699,7 @@ def main():
         border-radius: 8px !important;
         font-family: var(--body) !important;
         font-size: 0.92rem !important;
+        line-height: 1.55 !important;
     }
 
     .stDownloadButton > button {
@@ -754,18 +766,17 @@ def main():
         return
 
     st.markdown(
-        '<div class="section-header"><span>분석 요약</span><span class="en">SUMMARY</span></div>',
+        '<div class="section-header"><span>변환 미리보기</span><span class="en">PREVIEW</span></div>',
         unsafe_allow_html=True
     )
 
-    s1, s2, s3, s4 = st.columns(4)
-    s1.metric("원문 줄 수", len(raw_lines))
-    s2.metric("정리 후 줄 수", len(cleaned_lines))
-    s3.metric("블록 수", len(blocks))
-    s4.metric("씬 수", len(scenes))
-
     st.markdown(
-        '<div class="section-header"><span>변환 미리보기</span><span class="en">PREVIEW</span></div>',
+        f"""
+        <div class="status-note">
+            원문 {len(raw_lines)}줄 → 정리 {len(cleaned_lines)}줄 ·
+            블록 {len(blocks)}개 · 씬 {len(scenes)}개 감지
+        </div>
+        """,
         unsafe_allow_html=True
     )
 
@@ -776,7 +787,7 @@ def main():
         st.text_area(
             "원문 추출",
             value="\n".join(raw_lines),
-            height=520,
+            height=560,
             label_visibility="collapsed"
         )
 
@@ -785,7 +796,7 @@ def main():
         st.text_area(
             "구조화 결과",
             value=build_preview_text(scenes),
-            height=520,
+            height=560,
             label_visibility="collapsed"
         )
 
@@ -794,7 +805,11 @@ def main():
         unsafe_allow_html=True
     )
 
-    output_bytes = export_scenes_to_docx(scenes, template_path="template.docx")
+    try:
+        output_bytes = export_scenes_to_docx(scenes, template_path="template.docx")
+    except Exception as e:
+        st.error(f"DOCX 생성 중 오류가 발생했습니다: {e}")
+        return
 
     st.download_button(
         label="DOCX 다운로드",
