@@ -5,9 +5,14 @@ APP_CSS = """
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:wght@700;900&display=swap');
 
 :root {
-    --navy: #191970; --y: #FFCB05; --bg: #F7F7F5;
-    --card: #FFFFFF; --card-border: #E2E2E0; --t: #1A1A2E;
-    --dim: #8E8E99; --light-bg: #EEEEF6;
+    --navy: #191970;
+    --y: #FFCB05;
+    --bg: #F7F7F5;
+    --card: #FFFFFF;
+    --card-border: #E2E2E0;
+    --t: #1A1A2E;
+    --dim: #8E8E99;
+    --light-bg: #EEEEF6;
     --display: 'Playfair Display', 'Paperlogy', 'Georgia', serif;
     --body: 'Pretendard', -apple-system, sans-serif;
     --heading: 'Paperlogy', 'Pretendard', sans-serif;
@@ -19,19 +24,14 @@ html, body, [class*="css"] {
     -webkit-font-smoothing: antialiased;
 }
 
-.stApp, [data-testid="stAppViewContainer"], [data-testid="stMain"],
-[data-testid="stMainBlockContainer"], [data-testid="stHeader"],
+.stApp,
+[data-testid="stAppViewContainer"],
+[data-testid="stMain"],
+[data-testid="stMainBlockContainer"],
+[data-testid="stHeader"],
 [data-testid="stBottom"] {
     background-color: var(--bg) !important;
     color: var(--t) !important;
-}
-
-section[data-testid="stSidebar"] { display: none !important; }
-
-.block-container {
-    padding-top: 4.8rem !important;
-    padding-bottom: 3.2rem !important;
-    max-width: 1120px !important;
 }
 
 [data-testid="stAppViewContainer"] {
@@ -40,6 +40,16 @@ section[data-testid="stSidebar"] { display: none !important; }
 
 [data-testid="stHeader"] {
     background: transparent !important;
+}
+
+section[data-testid="stSidebar"] {
+    display: none !important;
+}
+
+.block-container {
+    padding-top: 4.8rem !important;
+    padding-bottom: 3.2rem !important;
+    max-width: 1120px !important;
 }
 
 .brand-wrap {
@@ -74,31 +84,6 @@ section[data-testid="stSidebar"] { display: none !important; }
     overflow: visible !important;
 }
 
-.header {
-    font-size: 0.82rem;
-    font-weight: 700;
-    color: var(--navy);
-    letter-spacing: 0.15em;
-    font-family: var(--heading);
-    margin-bottom: 0.5rem;
-    line-height: 1.4;
-}
-
-.brand-title {
-    font-size: 2.45rem;
-    font-weight: 900;
-    color: var(--navy);
-    font-family: var(--display);
-    letter-spacing: -0.02em;
-    position: relative;
-    display: inline-block;
-    line-height: 1.18;
-    padding-top: 0.08em;
-    padding-bottom: 0.12em;
-    margin-bottom: 0.28rem;
-    overflow: visible !important;
-}
-
 .brand-title::after {
     content: '';
     position: absolute;
@@ -116,6 +101,7 @@ section[data-testid="stSidebar"] { display: none !important; }
     letter-spacing: 0.15em;
     margin-top: 0.35rem;
     margin-bottom: 1.2rem;
+    line-height: 1.45;
 }
 
 .callout {
@@ -126,6 +112,7 @@ section[data-testid="stSidebar"] { display: none !important; }
     border-radius: 0 8px 8px 0;
     font-size: 0.92rem;
     color: var(--t);
+    line-height: 1.6;
 }
 
 .section-header {
