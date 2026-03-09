@@ -601,7 +601,7 @@ def main():
     st.markdown(
         """
         <div class="brand-wrap">
-            <div class="header">BLUE JEANS SCREENPLAY TOOLS</div>
+            <div class="header">BLUE JEANS</div>
             <div class="brand-title">Screenplay Converter</div>
             <div class="sub">TXT / DOCX → HOLLYWOOD SCREENPLAY FORMAT DOCX</div>
         </div>
