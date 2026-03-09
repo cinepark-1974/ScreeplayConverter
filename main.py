@@ -7,8 +7,6 @@ from typing import List, Optional, Tuple
 
 import streamlit as st
 from docx import Document
-from docx.enum.text import WD_ALIGN_PARAGRAPH
-from docx.shared import Inches, Pt
 
 from ui_style import APP_CSS
 
@@ -34,7 +32,11 @@ class Scene:
 # =========================================================
 
 APP_TITLE = "Screenplay Converter"
-DEFAULT_OUTPUT_NAME = "converted_hollywood_screenplay.docx"
+DEFAULT_OUTPUT_NAME = "converted_korean_screenplay.docx"
+
+STYLE_SCENE = "S#1. 씬번호"
+STYLE_ACTION = "각본지문"
+STYLE_DIALOGUE = "각본대사"
 
 META_PATTERNS = [
     r"^\s*beat\s*\d+",
@@ -90,17 +92,19 @@ TRANSITION_PATTERNS = [
 
 TIME_WORDS = [
     "DAY", "NIGHT", "MORNING", "EVENING", "DAWN", "DUSK", "LATER",
-    "낮", "밤", "아침", "새벽", "저녁", "그날", "잠시 후", "다음날", "다음 날"
+    "낮", "밤", "아침", "새벽", "저녁", "그날", "잠시 후", "다음날", "다음 날",
+    "현재", "과거", "3년 전", "현재시점"
 ]
 
 LOCATION_CUE_WORDS = [
     "옥상", "복도", "병실", "사무실", "주차장", "골목", "거리", "부엌", "주방",
     "거실", "방", "학교", "교실", "경찰서", "병원", "엘리베이터", "화장실",
     "수면", "호수", "창고", "지하", "계단", "로비", "운동장", "마당",
+    "펜션", "식당", "독", "선착장", "저수지", "창가", "차 안", "차안",
     "ROOFTOP", "HALLWAY", "OFFICE", "PARKING", "ALLEY", "STREET",
     "KITCHEN", "LIVING ROOM", "BEDROOM", "CLASSROOM", "POLICE STATION",
     "HOSPITAL", "ELEVATOR", "BATHROOM", "LAKE", "WAREHOUSE", "BASEMENT",
-    "STAIRS", "LOBBY", "YARD"
+    "STAIRS", "LOBBY", "YARD", "DOCK", "DINING", "PENSION"
 ]
 
 HEADER_NOISE_PATTERNS = [
@@ -167,7 +171,7 @@ def looks_like_scene_heading(line: str) -> bool:
         return True
 
     if any(word in s for word in LOCATION_CUE_WORDS):
-        if any(t in s.upper() for t in TIME_WORDS) or " - " in s or " / " in s:
+        if any(t in s.upper() for t in TIME_WORDS) or " - " in s or " / " in s or "—" in s:
             return True
 
     return False
@@ -182,9 +186,8 @@ def strip_scene_number_prefix(line: str) -> str:
 
 def canonical_scene_heading(line: str) -> str:
     s = strip_scene_number_prefix(line)
-    s = s.upper()
     s = re.sub(r"\s+", " ", s)
-    return s
+    return s.strip()
 
 
 def looks_like_parenthetical(line: str) -> bool:
@@ -323,7 +326,7 @@ def classify_lines(lines: List[str]) -> List[Block]:
         next_line = lines[i + 1] if i + 1 < len(lines) else ""
 
         if looks_like_transition(line):
-            blocks.append(Block("transition", normalize_line(line).upper()))
+            blocks.append(Block("transition", normalize_line(line)))
             mode = None
             continue
 
@@ -334,7 +337,7 @@ def classify_lines(lines: List[str]) -> List[Block]:
             continue
 
         if is_probable_character_name(line) and next_line and not looks_like_scene_heading(next_line):
-            blocks.append(Block("character", normalize_line(line).upper()))
+            blocks.append(Block("character", normalize_line(line)))
             mode = "dialogue"
             continue
 
@@ -384,7 +387,7 @@ def blocks_to_scenes(blocks: List[Block]) -> List[Scene]:
     def ensure_default_scene():
         nonlocal current_scene
         if current_scene is None:
-            current_scene = Scene(heading="INT. UNKNOWN LOCATION - DAY")
+            current_scene = Scene(heading="장소 미상")
             scenes.append(current_scene)
 
     for block in blocks:
@@ -400,7 +403,7 @@ def blocks_to_scenes(blocks: List[Block]) -> List[Scene]:
 
 
 # =========================================================
-# DOCX Export
+# DOCX style helpers
 # =========================================================
 
 def try_load_template(template_path: str) -> Document:
@@ -417,51 +420,96 @@ def clear_document_body(doc: Document) -> None:
         body.remove(child)
 
 
-def set_document_defaults(doc: Document) -> None:
+def style_exists(doc: Document, style_name: str) -> bool:
     try:
-        section = doc.sections[0]
-        section.top_margin = Inches(1.0)
-        section.bottom_margin = Inches(1.0)
-        section.left_margin = Inches(1.5)
-        section.right_margin = Inches(1.0)
-    except IndexError:
-        pass
-
-    style = doc.styles["Normal"]
-    style.font.name = "Courier New"
-    style.font.size = Pt(12)
+        _ = doc.styles[style_name]
+        return True
+    except KeyError:
+        return False
 
 
-def add_paragraph(
-    doc: Document,
-    text: str,
-    *,
-    align=None,
-    left_indent: float = 0.0,
-    right_indent: float = 0.0,
-    first_line_indent: Optional[float] = None,
-    space_before: float = 0.0,
-    space_after: float = 0.0,
-    keep_with_next: bool = False,
-    bold: bool = False,
-):
-    p = doc.add_paragraph()
-    p.alignment = align if align is not None else WD_ALIGN_PARAGRAPH.LEFT
-    pf = p.paragraph_format
-    pf.left_indent = Inches(left_indent)
-    pf.right_indent = Inches(right_indent)
-    if first_line_indent is not None:
-        pf.first_line_indent = Inches(first_line_indent)
-    pf.space_before = Pt(space_before)
-    pf.space_after = Pt(space_after)
-    pf.keep_with_next = keep_with_next
-
-    run = p.add_run(text)
-    run.bold = bold
-    run.font.name = "Courier New"
-    run.font.size = Pt(12)
+def add_styled_paragraph(doc: Document, text: str, preferred_style: str):
+    p = doc.add_paragraph(text)
+    if style_exists(doc, preferred_style):
+        p.style = preferred_style
     return p
 
+
+# =========================================================
+# Dialogue formatter
+# =========================================================
+
+def build_dialogue_line(character: str, dialogue: str) -> str:
+    character = normalize_line(character)
+    dialogue = normalize_line(dialogue)
+    return f"{character}\t\t{dialogue}"
+
+
+def scene_to_korean_blocks(scene: Scene) -> List[Tuple[str, str]]:
+    """
+    Returns list of (style_name, text)
+    style_name is one of:
+    - S#1. 씬번호
+    - 각본지문
+    - 각본대사
+    """
+    results: List[Tuple[str, str]] = []
+
+    # scene heading: code writes only heading text; Word style handles scene numbering
+    results.append((STYLE_SCENE, scene.heading))
+
+    pending_character: Optional[str] = None
+    pending_parenthetical: Optional[str] = None
+
+    for block in scene.blocks:
+        if block.kind == "action":
+            if pending_character:
+                # character without spoken line: flush name only
+                results.append((STYLE_DIALOGUE, pending_character))
+                pending_character = None
+                pending_parenthetical = None
+            results.append((STYLE_ACTION, block.text))
+
+        elif block.kind == "character":
+            if pending_character:
+                results.append((STYLE_DIALOGUE, pending_character))
+            pending_character = block.text
+            pending_parenthetical = None
+
+        elif block.kind == "parenthetical":
+            # user said parenthetical is rare and can be handled manually.
+            # keep temporarily and append inline if a dialogue line follows.
+            pending_parenthetical = block.text
+
+        elif block.kind == "dialogue":
+            if pending_character:
+                if pending_parenthetical:
+                    dialogue_text = f"{pending_parenthetical} {block.text}".strip()
+                else:
+                    dialogue_text = block.text
+                results.append((STYLE_DIALOGUE, build_dialogue_line(pending_character, dialogue_text)))
+                pending_character = None
+                pending_parenthetical = None
+            else:
+                # fallback: dialogue line without explicit speaker
+                results.append((STYLE_DIALOGUE, block.text))
+
+        elif block.kind == "transition":
+            if pending_character:
+                results.append((STYLE_DIALOGUE, pending_character))
+                pending_character = None
+                pending_parenthetical = None
+            results.append((STYLE_ACTION, block.text))
+
+    if pending_character:
+        results.append((STYLE_DIALOGUE, pending_character))
+
+    return results
+
+
+# =========================================================
+# DOCX Export
+# =========================================================
 
 def export_scenes_to_docx(
     scenes: List[Scene],
@@ -469,82 +517,15 @@ def export_scenes_to_docx(
 ) -> bytes:
     doc = try_load_template(template_path)
     clear_document_body(doc)
-    set_document_defaults(doc)
-
-    add_paragraph(
-        doc,
-        "SCREENPLAY",
-        align=WD_ALIGN_PARAGRAPH.CENTER,
-        space_before=18,
-        space_after=18,
-        bold=True,
-    )
-    add_paragraph(
-        doc,
-        "Converted Draft",
-        align=WD_ALIGN_PARAGRAPH.CENTER,
-        space_after=24,
-    )
-    doc.add_page_break()
 
     for scene in scenes:
-        add_paragraph(
-            doc,
-            scene.heading,
-            bold=True,
-            space_before=6,
-            space_after=6,
-            keep_with_next=True,
-        )
+        styled_blocks = scene_to_korean_blocks(scene)
 
-        for block in scene.blocks:
-            if block.kind == "action":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    space_after=6,
-                )
+        for style_name, text in styled_blocks:
+            add_styled_paragraph(doc, text, style_name)
 
-            elif block.kind == "character":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    left_indent=2.2,
-                    space_before=6,
-                    space_after=0,
-                    keep_with_next=True,
-                )
-
-            elif block.kind == "parenthetical":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    left_indent=1.8,
-                    right_indent=2.0,
-                    space_after=0,
-                    keep_with_next=True,
-                )
-
-            elif block.kind == "dialogue":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    left_indent=1.4,
-                    right_indent=1.6,
-                    space_after=3,
-                )
-
-            elif block.kind == "transition":
-                add_paragraph(
-                    doc,
-                    block.text,
-                    align=WD_ALIGN_PARAGRAPH.RIGHT,
-                    space_before=6,
-                    space_after=6,
-                    bold=True,
-                )
-
-        add_paragraph(doc, "", space_after=6)
+        # scene spacing: rely on style if possible, but keep one blank paragraph
+        doc.add_paragraph("")
 
     buffer = io.BytesIO()
     doc.save(buffer)
@@ -558,12 +539,61 @@ def export_scenes_to_docx(
 
 def build_preview_text(scenes: List[Scene]) -> str:
     parts: List[str] = []
+
     for scene in scenes:
         parts.append(scene.heading)
         parts.append("")
+
+        pending_character: Optional[str] = None
+        pending_parenthetical: Optional[str] = None
+
         for block in scene.blocks:
-            parts.append(block.text)
+            if block.kind == "action":
+                if pending_character:
+                    parts.append(pending_character)
+                    parts.append("")
+                    pending_character = None
+                    pending_parenthetical = None
+                parts.append(block.text)
+                parts.append("")
+
+            elif block.kind == "character":
+                if pending_character:
+                    parts.append(pending_character)
+                    parts.append("")
+                pending_character = block.text
+                pending_parenthetical = None
+
+            elif block.kind == "parenthetical":
+                pending_parenthetical = block.text
+
+            elif block.kind == "dialogue":
+                if pending_character:
+                    if pending_parenthetical:
+                        combined = f"{pending_parenthetical} {block.text}".strip()
+                    else:
+                        combined = block.text
+                    parts.append(build_dialogue_line(pending_character, combined))
+                    parts.append("")
+                    pending_character = None
+                    pending_parenthetical = None
+                else:
+                    parts.append(block.text)
+                    parts.append("")
+
+            elif block.kind == "transition":
+                if pending_character:
+                    parts.append(pending_character)
+                    parts.append("")
+                    pending_character = None
+                    pending_parenthetical = None
+                parts.append(block.text)
+                parts.append("")
+
+        if pending_character:
+            parts.append(pending_character)
             parts.append("")
+
     return "\n".join(parts).strip()
 
 
@@ -601,9 +631,9 @@ def main():
     st.markdown(
         """
         <div class="brand-wrap">
-            <div class="header">BLUE JEANS</div>
+            <div class="header">BLUE JEANS SCREENPLAY TOOLS</div>
             <div class="brand-title">Screenplay Converter</div>
-            <div class="sub">TXT / DOCX → HOLLYWOOD SCREENPLAY FORMAT DOCX</div>
+            <div class="sub">TXT / DOCX → KOREAN SCREENPLAY FORMAT DOCX</div>
         </div>
         """,
         unsafe_allow_html=True
@@ -613,7 +643,7 @@ def main():
         """
         <div class="callout">
             원고 파일을 업로드하면 개발용 메타 텍스트를 제거하고,
-            씬 / 지문 / 인물명 / 대사를 정리해 헐리우드 표준에 가까운 DOCX로 변환합니다.
+            씬 / 지문 / 대사를 한국형 시나리오 DOCX 작업본으로 정리합니다.
         </div>
         """,
         unsafe_allow_html=True
@@ -624,7 +654,7 @@ def main():
         f"""
         <div class="meta-chip-wrap">
             <div class="meta-chip">OUTPUT: DOCX</div>
-            <div class="meta-chip">STYLE: HOLLYWOOD</div>
+            <div class="meta-chip">STYLE: KOREAN SCREENPLAY</div>
             <div class="meta-chip">{chip_text}</div>
         </div>
         """,
